@@ -1,4 +1,5 @@
-# main_web.py — TFS Pilot Report Builder (compact UI + SF buttons + single-click build)
+# main_web.py — TFS Pilot Report Builder (compact UI + SF buttons + multi-upload + single-click build)
+
 import re
 import unicodedata
 from io import BytesIO
@@ -18,7 +19,7 @@ st.set_page_config(page_title="Pilot Report Builder — Web", layout="wide")
 APP_NAME = "TFS Pilot Report Builder"
 APP_VERSION = "2025.09.01"
 
-# 🔗 Paste your Salesforce report URLs here:
+# Salesforce report URLs here:
 SALESFORCE_REPORTS = {
     "block": "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZfNEAU/view?queryScope=userFolders",  # Block Time / Instrument Currency
     "duty":  "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZnREAU/view?queryScope=userFolders",   # Duty Days
@@ -29,27 +30,41 @@ def inject_css():
     st.markdown(
         """
         <style>
-        .block-container { padding-top: calc(3.25rem + env(safe-area-inset-top));
-                           padding-bottom: 1.25rem; max-width: 1200px; }
+        .block-container {
+            padding-top: calc(3.25rem + env(safe-area-inset-top));
+            padding-bottom: 1.25rem;
+            max-width: 1200px;
+        }
         h1, h2, h3 { letter-spacing: 0.2px; }
 
         /* Primary buttons */
-        .stButton > button { background:#E4002B; color:#fff; border:0;
-                             border-radius:14px; padding:.8rem 1.15rem; font-weight:700; }
+        .stButton > button {
+            background:#E4002B; color:#fff; border:0;
+            border-radius:14px; padding:.8rem 1.15rem; font-weight:700;
+        }
         .stButton > button:hover { filter:brightness(0.95); }
-        .stDownloadButton > button { border-radius:14px; padding:.8rem 1.15rem; font-weight:700; }
+        .stDownloadButton > button {
+            border-radius:14px; padding:.8rem 1.15rem; font-weight:700;
+        }
 
         /* Ready/Waiting pills */
-        .pill { display:inline-block; padding:.15rem .6rem; border-radius:999px;
-                font-size:.85rem; font-weight:600; margin-left:.4rem; vertical-align:middle; }
+        .pill {
+            display:inline-block; padding:.15rem .6rem; border-radius:999px;
+            font-size:.85rem; font-weight:600; margin-left:.4rem; vertical-align:middle;
+        }
         .ok   { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
         .wait { background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }
 
         /* Small link-style button for Salesforce open links */
-        .sfbtn { display:inline-block; text-decoration:none; background:#111827; color:#fff;
-                 padding:.45rem .7rem; border-radius:10px; font-weight:600; }
+        .sfbtn {
+            display:inline-block; text-decoration:none; background:#111827; color:#fff;
+            padding:.45rem .7rem; border-radius:10px; font-weight:600;
+        }
         .sfbtn:hover { filter:brightness(0.95); }
         .sfbtn.disabled { background:#9ca3af; pointer-events:none; }
+
+        /* Center text inside Streamlit alert ribbons (info/warn/success/error) */
+        div[data-testid="stAlert"] p { text-align: center; }
 
         #MainMenu {visibility:hidden;} footer {visibility:hidden;}
         </style>
@@ -58,7 +73,7 @@ def inject_css():
     )
 
 def pill(ok: bool) -> str:
-    return f"<span class='pill {'ok' if ok else 'wait'}'>{'Ready' if ok else 'Waiting'}</span>"
+    return f"<span class='pill {'ok' if ok else 'wait'}'>{'Cleared For Takeoff' if ok else 'Line Up And Wait'}</span>"
 
 def link_button(label: str, url: Optional[str]):
     if url and url.startswith("http"):
@@ -86,7 +101,7 @@ if "quick_totals" not in st.session_state:
 st.markdown(f"### 🛫 {APP_NAME}")
 st.caption("Upload the 3 .Biz Reports (Block Time, Duty Days, PTO & Off). Filthy Animals. …Go With Trim")
 
-qt_placeholder = st.empty()  # so we can re-render metrics after build in the same run
+qt_placeholder = st.empty()  # quick totals slot under header
 
 def render_quick_totals(ph):
     vals = st.session_state.quick_totals or {"block30": None, "duty_ytd": None, "rons90": None, "off30": None}
@@ -131,12 +146,8 @@ def clean_pilot_name(s: str) -> str:
     return s
 
 def looks_like_noise(s: str) -> bool:
-    if s is None: return True
-    t = str(s).strip().lower()
-    if t in ("","nan"): return True
-    def looks_like_noise(s: str) -> bool:
-        if s is None:
-         return True
+    if s is None:
+        return True
     t = str(s).strip().lower()
     if t in ("", "nan"):
         return True
@@ -147,6 +158,7 @@ def looks_like_noise(s: str) -> bool:
     if not re.search(r"[a-zA-Z]", t):
         return True
     return False
+
 def drop_empty_metric_rows(df: pd.DataFrame, name_col: str, metric_cols: List[str]) -> pd.DataFrame:
     out = df.copy()
     out[name_col] = out[name_col].map(clean_pilot_name)
@@ -181,6 +193,38 @@ def _find_row(df: pd.DataFrame, tokens: List[str], max_rows: int = 120) -> Optio
         if all(t in row for t in toks):
             return i
     return None
+
+# ---------- Multi-file sniffing ----------
+def sniff_report_kind(file_obj, filename: str = "") -> str:
+    """
+    Best-effort detection of report kind: 'block' | 'duty' | 'pto' | 'unknown'
+    Prefers filename hints; falls back to scanning the first ~60 rows.
+    """
+    name = (filename or getattr(file_obj, "name", "") or "").lower()
+    if "block" in name or "instrument" in name:
+        return "block"
+    if "duty" in name:
+        return "duty"
+    if "pto" in name or ("off" in name and "report" in name):
+        return "pto"
+
+    # Content sniff (non-destructive)
+    try:
+        data_bytes = file_obj.getvalue() if hasattr(file_obj, "getvalue") else file_obj.read()
+        raw = pd.read_excel(BytesIO(data_bytes), header=None, nrows=60)
+        text = " | ".join(
+            " | ".join(map(str, raw.iloc[i].tolist())).lower()
+            for i in range(min(len(raw), 60))
+        )
+        if ("sum of block time" in text) or ("takeoff" in text and "landing" in text):
+            return "block"
+        if ("pto" in text and "off" in text):
+            return "pto"
+        if ("30 days" in text and "90 days" in text and "ytd" in text) and ("weekend duty" in text or "rons" in text or "ron" in text):
+            return "duty"
+    except Exception:
+        pass
+    return "unknown"
 
 # =============================
 # Parsers
@@ -428,44 +472,60 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     return bio, fname
 
 # =============================
-# Upload row (3 horizontal uploaders)
+# Upload row (multi-upload + 3 status blocks)
 # =============================
+st.markdown("#### Upload reports")
+
+# One control that accepts all 3 files at once
+bulk_files = st.file_uploader(
+    "Drop **all three** .xlsx exports here (or click to select multiple)",
+    type=["xlsx"],
+    accept_multiple_files=True,
+    key="bulk_all",
+    help="You can still use the individual slots below if you prefer."
+)
+
+# Auto-assign detected files from the bulk uploader
+sniffed_bytes = {"block": None, "duty": None, "pto": None}
+if bulk_files:
+    for f in bulk_files:
+        kind = sniff_report_kind(f, f.name)
+        if kind in sniffed_bytes and sniffed_bytes[kind] is None:
+            sniffed_bytes[kind] = f.getvalue()
+
+# Three compact status columns (with SF links), plus manual uploaders if you want them
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    block_file = st.file_uploader(
-        "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
+    block_file_manual = st.file_uploader(
+        "1) Block Time (.xlsx)", type=["xlsx"], key="blk",
         help=".Biz Report: Block Time / Instrument Currency"
     )
-    s1, s2 = st.columns([1.2, 0.8])
-    with s1:
-        st.markdown(f"**Block Time** {pill(block_file is not None)}", unsafe_allow_html=True)
-    with s2:
-        link_button("Block Time Report", SALESFORCE_REPORTS.get("block"))
+    block_ready = (block_file_manual is not None) or (sniffed_bytes["block"] is not None)
+    st.markdown(f"**Block Time** {pill(block_ready)}", unsafe_allow_html=True)
+    link_button("Block Time Report", SALESFORCE_REPORTS.get("block"))
     st.write("")
-    build = st.button("Build Pilot Report ✅", use_container_width=True)
+    build_col = st.container()
+    with build_col:
+        ready_all_placeholder = st.empty()  # can be used if you want a note when disabled
 
 with col2:
-    duty_file = st.file_uploader(
-        "2) Duty Days export (.xlsx)", type=["xlsx"], key="duty",
+    duty_file_manual = st.file_uploader(
+        "2) Duty Days (.xlsx)", type=["xlsx"], key="duty",
         help=".Biz Report: Duty Days"
     )
-    s1, s2 = st.columns([1.2, 0.8])
-    with s1:
-        st.markdown(f"**Duty Days** {pill(duty_file is not None)}", unsafe_allow_html=True)
-    with s2:
-        link_button("Duty Days Report", SALESFORCE_REPORTS.get("duty"))
+    duty_ready = (duty_file_manual is not None) or (sniffed_bytes["duty"] is not None)
+    st.markdown(f"**Duty Days** {pill(duty_ready)}", unsafe_allow_html=True)
+    link_button("Duty Days Report", SALESFORCE_REPORTS.get("duty"))
 
 with col3:
-    pto_file = st.file_uploader(
-        "3) PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
+    pto_file_manual = st.file_uploader(
+        "3) PTO & Off (.xlsx)", type=["xlsx"], key="pto",
         help=".Biz Report: PTO and Off"
     )
-    s1, s2 = st.columns([1.2, 0.8])
-    with s1:
-        st.markdown(f"**PTO & Off** {pill(pto_file is not None)}", unsafe_allow_html=True)
-    with s2:
-        link_button("PTO/Off Report", SALESFORCE_REPORTS.get("pto"))
+    pto_ready = (pto_file_manual is not None) or (sniffed_bytes["pto"] is not None)
+    st.markdown(f"**PTO & Off** {pill(pto_ready)}", unsafe_allow_html=True)
+    link_button("PTO/Off Report", SALESFORCE_REPORTS.get("pto"))
     st.write("")
     # Download button placeholder so it can be updated within the same run
     download_placeholder = st.empty()
@@ -478,30 +538,50 @@ with col3:
             disabled=True,
         )
 
+# Choose sources: prefer the manual slot if provided, else use the bulk-detected bytes
+block_src = block_file_manual if block_file_manual else (BytesIO(sniffed_bytes["block"]) if sniffed_bytes["block"] else None)
+duty_src  = duty_file_manual  if duty_file_manual  else (BytesIO(sniffed_bytes["duty"])  if sniffed_bytes["duty"]  else None)
+pto_src   = pto_file_manual   if pto_file_manual   else (BytesIO(sniffed_bytes["pto"])   if sniffed_bytes["pto"]   else None)
+
+# Action row: build on the left, download on the right (keeps layout stable)
+a1, a2, a3 = st.columns(3)
+with a1:
+    ready_all = bool(block_src and duty_src and pto_src)
+    build = st.button(
+        "Build Pilot Report ✅",
+        use_container_width=True,
+        disabled=not ready_all,
+        help=None if ready_all else "Upload all 3 reports to enable"
+    )
+with a3:
+    # (download placeholder rendered earlier in col3)
+
+    pass
+
 # =============================
 # Processing (single-click build)
 # =============================
 if build:
-    if not (block_file and duty_file and pto_file):
-        st.error("Please upload all three .Biz Reports.")
+    if not (block_src and duty_src and pto_src):
+        st.error("Jeff!  All 3 Reports From .Biz!.")
         st.stop()
 
     with st.spinner("Parsing files…"):
         try:
-            blk = parse_block_time(block_file)
+            blk = parse_block_time(block_src)
         except Exception as e:
             st.exception(e); st.stop()
         try:
-            dut = parse_duty_days(duty_file)
+            dut = parse_duty_days(duty_src)
         except Exception as e:
             st.exception(e); st.stop()
         try:
-            pto = parse_pto_off(pto_file)
+            pto = parse_pto_off(pto_src)
         except Exception as e:
             st.exception(e); st.stop()
 
     with st.spinner("Merging & formatting…"):
-        # Merge by first token of name
+        # Merge by first token of name (consistent across all three)
         blk = blk.rename(columns={"Pilot": "Pilot_blk"})
         blk_key = blk.assign(PilotKey=blk["Pilot_blk"].str.split().str[0].str.lower())
         dut_key = dut.assign(PilotKey=dut["PilotFirst"].str.split().str[0].str.lower())
@@ -600,25 +680,6 @@ if build:
                 use_container_width=True,
             )
 
-    st.success("✅ Report built. Download is ready on the right.")
+    st.success("✅ Report Is Ready.")
 else:
-    st.markdown(
-    """
-    <style>
-      .info-ribbon {
-        text-align: center;
-        background: #eef6ff;
-        color: #1d4ed8;
-        border: 1px solid #bfdbfe;
-        padding: 12px 16px;
-        border-radius: 12px;
-        font-weight: 500;
-      }
-    </style>
-    <div class="info-ribbon">
-      Upload your three .Biz Reports and click <b>Build Pilot Report</b>.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
+    st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
