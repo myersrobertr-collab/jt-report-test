@@ -138,7 +138,7 @@ def looks_like_noise(s: str) -> bool:
         if s is None:
          return True
     t = str(s).strip().lower()
-        if t in ("", "nan"):
+    if t in ("", "nan"):
         return True
     if any(p in t for p in NOISE_PATTERNS):
         return True
