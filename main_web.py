@@ -134,13 +134,19 @@ def looks_like_noise(s: str) -> bool:
     if s is None: return True
     t = str(s).strip().lower()
     if t in ("","nan"): return True
-    if any(p in t for t in (t,)) or any(h in t for h in ()):  # keep pattern structure
-        pass
-    if any(p in t for p in NOISE_PATTERNS): return True
-    if any(h in t for h in NOISE_NAME_HINTS): return True
-    if not re.search(r"[a-zA-Z]", t): return True
+    def looks_like_noise(s: str) -> bool:
+    if s is None:
+        return True
+    t = str(s).strip().lower()
+    if t in ("", "nan"):
+        return True
+    if any(p in t for p in NOISE_PATTERNS):
+        return True
+    if any(h in t for h in NOISE_NAME_HINTS):
+        return True
+    if not re.search(r"[a-zA-Z]", t):
+        return True
     return False
-
 def drop_empty_metric_rows(df: pd.DataFrame, name_col: str, metric_cols: List[str]) -> pd.DataFrame:
     out = df.copy()
     out[name_col] = out[name_col].map(clean_pilot_name)
