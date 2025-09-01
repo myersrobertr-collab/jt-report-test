@@ -1,4 +1,4 @@
-# main_web.py — TFS Pilot Report Builder (compact UI + Salesforce buttons)
+# main_web.py — TFS Pilot Report Builder (compact UI + SF buttons + single-click build)
 import re
 import unicodedata
 from io import BytesIO
@@ -18,11 +18,11 @@ st.set_page_config(page_title="Pilot Report Builder — Web", layout="wide")
 APP_NAME = "TFS Pilot Report Builder"
 APP_VERSION = "2025.09.01"
 
-# Salesforce report URLs here:
+# 🔗 Paste your Salesforce report URLs here:
 SALESFORCE_REPORTS = {
-    "block": "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZfNEAU/view?queryScope=userFolders",  # Block Time / Instrument Currency
-    "duty":  "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZnREAU/view?queryScope=userFolders",   # Duty Days
-    "pto":   "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yaoLEAQ/view?queryScope=userFolders",    # PTO & Off
+    "block": "https://your.salesforce.com/REPORT_ID_BLOCK",  # Block Time / Instrument Currency
+    "duty":  "https://your.salesforce.com/REPORT_ID_DUTY",   # Duty Days
+    "pto":   "https://your.salesforce.com/REPORT_ID_PTO",    # PTO & Off
 }
 
 def inject_css():
@@ -62,8 +62,10 @@ def pill(ok: bool) -> str:
 
 def link_button(label: str, url: Optional[str]):
     if url and url.startswith("http"):
-        st.markdown(f"<div style='text-align:right'><a class='sfbtn' href='{url}' target='_blank'>{label}</a></div>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='text-align:right'><a class='sfbtn' href='{url}' target='_blank'>{label} ↗</a></div>",
+            unsafe_allow_html=True,
+        )
     else:
         st.markdown("<div style='text-align:right'><a class='sfbtn disabled'>Link missing</a></div>",
                     unsafe_allow_html=True)
@@ -79,21 +81,28 @@ if "quick_totals" not in st.session_state:
     st.session_state.quick_totals = None  # dict
 
 # =============================
-# Header + quick totals
+# Header + quick totals placeholder
 # =============================
 st.markdown(f"### 🛫 {APP_NAME}")
 st.caption("Upload the 3 .Biz Reports (Block Time, Duty Days, PTO & Off). Filthy Animals. …Go With Trim")
-st.markdown("---")
-qt_cols = st.columns(4)
-qt_vals = st.session_state.quick_totals or {"block30": None, "duty_ytd": None, "rons90": None, "off30": None}
-qt_cols[0].metric("Block (30 days)", f"{qt_vals['block30']:.1f} hrs" if qt_vals["block30"] is not None else "—")
-qt_cols[1].metric("Duty Days (YTD)", int(qt_vals["duty_ytd"]) if qt_vals["duty_ytd"] is not None else "—")
-qt_cols[2].metric("RONs (90 days)", int(qt_vals["rons90"]) if qt_vals["rons90"] is not None else "—")
-qt_cols[3].metric("Days Off (30 days)", int(qt_vals["off30"]) if qt_vals["off30"] is not None else "—")
-st.markdown("---")
+
+qt_placeholder = st.empty()  # so we can re-render metrics after build in the same run
+
+def render_quick_totals(ph):
+    vals = st.session_state.quick_totals or {"block30": None, "duty_ytd": None, "rons90": None, "off30": None}
+    with ph.container():
+        st.markdown("---")
+        qt_cols = st.columns(4)
+        qt_cols[0].metric("Block (30 days)", f"{vals['block30']:.1f} hrs" if vals["block30"] is not None else "—")
+        qt_cols[1].metric("Duty Days (YTD)", int(vals["duty_ytd"]) if vals["duty_ytd"] is not None else "—")
+        qt_cols[2].metric("RONs (90 days)", int(vals["rons90"]) if vals["rons90"] is not None else "—")
+        qt_cols[3].metric("Days Off (30 days)", int(vals["off30"]) if vals["off30"] is not None else "—")
+        st.markdown("---")
+
+render_quick_totals(qt_placeholder)
 
 # =============================
-# Whitelist
+# Hard-locked pilot roster & order
 # =============================
 PILOT_WHITELIST: List[str] = [
     "Barry Wolfe","Bradley Jordan","Debra Voit","Dustin Anderson","Eric Tange",
@@ -125,6 +134,8 @@ def looks_like_noise(s: str) -> bool:
     if s is None: return True
     t = str(s).strip().lower()
     if t in ("","nan"): return True
+    if any(p in t for t in (t,)) or any(h in t for h in ()):  # keep pattern structure
+        pass
     if any(p in t for p in NOISE_PATTERNS): return True
     if any(h in t for h in NOISE_NAME_HINTS): return True
     if not re.search(r"[a-zA-Z]", t): return True
@@ -266,6 +277,7 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     for c in other_num_cols:
         rep_out[c] = pd.to_numeric(rep_out[c], errors="coerce").round(0)
 
+    # AVERAGE row (ceil) for non-Block cols
     avg_mask = rep_out["Pilot"].astype(str).str.upper() == "AVERAGE"
     for c in other_num_cols:
         rep_out.loc[avg_mask, c] = np.ceil(pd.to_numeric(rep_out.loc[avg_mask, c], errors="coerce")).astype(int)
@@ -288,11 +300,13 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
         group_white = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":WHITE,"font_color":TARGET_RED,"border":1})
         sub_red     = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":TARGET_RED,"font_color":WHITE,"border":1})
         sub_white   = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":WHITE,"font_color":TARGET_RED,"border":1})
+
         pilot_sub   = wb.add_format({"bold": True,"align":"left","valign":"vcenter","bg_color":"#F2F2F2","border":1})
 
         text_left   = wb.add_format({"num_format":"@",  "align":"left",   "valign":"vcenter"})
         int_center  = wb.add_format({"num_format":"0",  "align":"center", "valign":"vcenter"})
         hour_center = wb.add_format({"num_format":"0.0","align":"center", "valign":"vcenter"})
+
         text_total  = wb.add_format({"num_format":"@",  "align":"left",   "valign":"vcenter","bg_color":"#FFF2CC","bold":True})
         int_total   = wb.add_format({"num_format":"0",  "align":"center", "valign":"vcenter","bg_color":"#FFF2CC","bold":True})
         hour_total  = wb.add_format({"num_format":"0.0","align":"center", "valign":"vcenter","bg_color":"#FFF2CC","bold":True})
@@ -417,12 +431,11 @@ with col1:
         "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
         help="Salesforce report: Block Time / Instrument Currency"
     )
-    # Status + Salesforce link row
     s1, s2 = st.columns([1.2, 0.8])
     with s1:
         st.markdown(f"**Block Time** {pill(block_file is not None)}", unsafe_allow_html=True)
     with s2:
-        link_button("Open in Salesforce ↗", SALESFORCE_REPORTS.get("block"))
+        link_button("Block Time Report", SALESFORCE_REPORTS.get("block"))
     st.write("")
     build = st.button("Build Pilot Report ✅", use_container_width=True)
 
@@ -435,7 +448,7 @@ with col2:
     with s1:
         st.markdown(f"**Duty Days** {pill(duty_file is not None)}", unsafe_allow_html=True)
     with s2:
-        link_button("Open in Salesforce ↗", SALESFORCE_REPORTS.get("duty"))
+        link_button("Duty Days Report", SALESFORCE_REPORTS.get("duty"))
 
 with col3:
     pto_file = st.file_uploader(
@@ -446,17 +459,11 @@ with col3:
     with s1:
         st.markdown(f"**PTO & Off** {pill(pto_file is not None)}", unsafe_allow_html=True)
     with s2:
-        link_button("Open in Salesforce ↗", SALESFORCE_REPORTS.get("pto"))
+        link_button("PTO/Off Report", SALESFORCE_REPORTS.get("pto"))
     st.write("")
-    if st.session_state.report_bytes:
-        st.download_button(
-            "⬇️ Download Pilot Report (Excel)",
-            st.session_state.report_bytes,
-            st.session_state.report_name or "Pilot_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-    else:
+    # Download button placeholder so it can be updated within the same run
+    download_placeholder = st.empty()
+    with download_placeholder.container():
         st.download_button(
             "⬇️ Download Pilot Report (Excel)",
             b"", "Pilot_Report.xlsx",
@@ -466,7 +473,7 @@ with col3:
         )
 
 # =============================
-# Processing
+# Processing (single-click build)
 # =============================
 if build:
     if not (block_file and duty_file and pto_file):
@@ -488,6 +495,7 @@ if build:
             st.exception(e); st.stop()
 
     with st.spinner("Merging & formatting…"):
+        # Merge by first token of name
         blk = blk.rename(columns={"Pilot": "Pilot_blk"})
         blk_key = blk.assign(PilotKey=blk["Pilot_blk"].str.split().str[0].str.lower())
         dut_key = dut.assign(PilotKey=dut["PilotFirst"].str.split().str[0].str.lower())
@@ -496,6 +504,7 @@ if build:
         rep = blk_key.merge(dut_key, on="PilotKey", how="outer", suffixes=("", "_dut"))
         rep = rep.merge(pto_key, on="PilotKey", how="outer", suffixes=("", "_pto"))
 
+        # Display name preference: Block → PTO → Duty → key
         def _pick(row):
             if pd.notna(row.get("Pilot_blk")) and str(row["Pilot_blk"]).strip(): return row["Pilot_blk"]
             if pd.notna(row.get("PilotFirst_pto")) and str(row["PilotFirst_pto"]).strip(): return row["PilotFirst_pto"]
@@ -503,6 +512,7 @@ if build:
             return str(row.get("PilotKey", "")).title()
         rep["Pilot"] = rep.apply(_pick, axis=1)
 
+        # Cleanup and order lock
         rep = rep.drop(columns=["Pilot_blk","PilotFirst","PilotFirst_pto","PilotKey"], errors="ignore")
         rep = rep.loc[:, ~rep.columns.duplicated()]
 
@@ -512,6 +522,7 @@ if build:
         rep["Pilot"] = pd.Categorical(rep["Pilot"], categories=order, ordered=True)
         rep = rep.sort_values("Pilot").reset_index(drop=True)
 
+        # Label 90-day takeoffs/landings for grouping
         rep = rep.rename(columns={
             "Day Takeoff": "Day Takeoff 90 Day",
             "Night Takeoff": "Night Takeoff 90 Day",
@@ -519,6 +530,7 @@ if build:
             "Night Landing": "Night Landing 90 Day",
         })
 
+        # Exact output column order
         desired_order = [
             "Pilot",
             "Duty Days 30 Day","Duty Days 90 Day","Duty Days YTD",
@@ -531,14 +543,17 @@ if build:
             "Day Landing 90 Day","Night Landing 90 Day",
             "Holds 6 Month",
         ]
-        cols_order = [c for c in desired_order if c in rep.columns] + [c for c in rep.columns if c not in desired_order and c != "Pilot"]
+        cols_order = [c for c in desired_order if c in rep.columns] + \
+                     [c for c in rep.columns if c not in desired_order and c != "Pilot"]
         rep = rep[cols_order]
 
+        # Fill numerics and dedupe cols
         for c in rep.columns:
             if c != "Pilot" and pd.api.types.is_numeric_dtype(rep[c]):
                 rep[c] = rep[c].fillna(0)
         rep = collapse_duplicate_columns(rep)
 
+        # Totals/Averages rows
         numeric_cols = [c for c in rep.columns if c != "Pilot" and pd.api.types.is_numeric_dtype(rep[c])]
         if not numeric_cols:
             st.error("No numeric columns were detected after merging. Check that exports match your current Salesforce formats.")
@@ -548,7 +563,7 @@ if build:
         avg_row   = {c: rep[c].mean() for c in numeric_cols};   avg_row["Pilot"] = "AVERAGE"
         rep_out = pd.concat([rep, pd.DataFrame([total_row, avg_row])], ignore_index=True)
 
-        # Update quick totals
+        # Update quick totals (from TOTAL row) and re-render metrics NOW
         tot = rep_out[rep_out["Pilot"].astype(str).str.upper() == "TOTAL"]
         if not tot.empty:
             t = tot.iloc[0]
@@ -558,8 +573,9 @@ if build:
                 "rons90": int(t.get("RONs 90 Day", 0)) if "RONs 90 Day" in rep_out.columns else None,
                 "off30": int(t.get("OFF 30 Day", 0)) if "OFF 30 Day" in rep_out.columns else None,
             }
+        render_quick_totals(qt_placeholder)  # refresh metrics in-place
 
-        # Export to Excel + stash in session state
+        # Export to Excel and show enabled download button immediately
         try:
             bio, fname = round_and_export(rep_out)
         except Exception as e:
@@ -568,6 +584,16 @@ if build:
         st.session_state.report_bytes = bio.getvalue()
         st.session_state.report_name = fname
 
-    st.success("✅ Report built. Use the Download button on the right.")
+        # Re-render the download button inside its placeholder (no second click needed)
+        with download_placeholder.container():
+            st.download_button(
+                "⬇️ Download Pilot Report (Excel)",
+                st.session_state.report_bytes,
+                st.session_state.report_name or "Pilot_Report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+    st.success("✅ Report built. Download is ready on the right.")
 else:
     st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
