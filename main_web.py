@@ -435,7 +435,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     block_file = st.file_uploader(
         "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
-        help="Salesforce report: Block Time / Instrument Currency"
+        help=".Biz Report: Block Time / Instrument Currency"
     )
     s1, s2 = st.columns([1.2, 0.8])
     with s1:
@@ -448,7 +448,7 @@ with col1:
 with col2:
     duty_file = st.file_uploader(
         "2) Duty Days export (.xlsx)", type=["xlsx"], key="duty",
-        help="Salesforce report: Duty Days"
+        help=".Biz Report: Duty Days"
     )
     s1, s2 = st.columns([1.2, 0.8])
     with s1:
@@ -459,7 +459,7 @@ with col2:
 with col3:
     pto_file = st.file_uploader(
         "3) PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
-        help="Salesforce report: PTO and Off"
+        help=".Biz Report: PTO and Off"
     )
     s1, s2 = st.columns([1.2, 0.8])
     with s1:
