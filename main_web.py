@@ -602,4 +602,24 @@ if build:
 
     st.success("✅ Report built. Download is ready on the right.")
 else:
-    st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
+    # st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
+    st.markdown(
+    """
+    <style>
+      .info-ribbon {
+        text-align: center;
+        background: #eef6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+        padding: 12px 16px;
+        border-radius: 12px;
+        font-weight: 500;
+      }
+    </style>
+    <div class="info-ribbon">
+      Upload your three .Biz Reports and click <b>Build Pilot Report</b>.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
