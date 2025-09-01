@@ -1,4 +1,4 @@
-# main_web.py  — TFS Pilot Report Builder (release 2025-09-01, stacked UI)
+# main_web.py  — TFS Pilot Report Builder (release 2025-09-01, stacked UI FIX)
 import re
 import unicodedata
 from io import BytesIO
@@ -34,8 +34,8 @@ def inject_css():
         /* primary buttons: square-ish with rounded corners */
         .stButton > button {
             background: #E4002B; color: white; border: 0;
-            border-radius: 14px;           /* more square but rounded */
-            padding: .8rem 1.15rem;        /* consistent height */
+            border-radius: 14px;
+            padding: .8rem 1.15rem;
             font-weight: 700;
         }
         .stButton > button:hover { filter: brightness(0.95); }
@@ -401,14 +401,14 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     return bio, fname
 
 # =============================
-# Uploads UI  (stacked + centered)
+# Uploads UI  (stacked + centered, no illegal nesting)
 # =============================
-left, right = st.columns([1.2, 1])  # keep help panel on the right
+left, right = st.columns([1.2, 1])  # help panel stays on the right
 
 with left:
     st.subheader("Upload reports")
 
-    # Center column that holds a vertical stack of uploaders
+    # One-level nesting only: three columns create a centered middle column
     padL, center, padR = st.columns([1, 1.3, 1])
     with center:
         block_file = st.file_uploader(
@@ -432,10 +432,8 @@ with left:
         st.markdown(f"PTO & Off {pill(pto_file is not None)}", unsafe_allow_html=True)
         st.write("")
 
-        # Centered Build button under the stack
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c2:
-            build = st.button("Build Pilot Report ✅", use_container_width=True)
+        # No extra columns here (would be 2nd-level nesting) — keep the button in this centered column
+        build = st.button("Build Pilot Report ✅", use_container_width=True)
 
 with right:
     st.subheader("How it works")
@@ -568,7 +566,7 @@ if build:
 
     st.success("✅ Report built. Use the download button below.")
 
-    # Centered download button to match Build button
+    # Centered download button (top-level, so it's safe to use columns here)
     d1, d2, d3 = st.columns([1, 2, 1])
     with d2:
         st.download_button(
