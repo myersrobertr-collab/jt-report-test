@@ -1,4 +1,4 @@
-# main_web.py — TFS Pilot Report Builder (2025-09-01 • compact horizontal UI)
+# main_web.py — TFS Pilot Report Builder (compact UI + Salesforce buttons)
 import re
 import unicodedata
 from io import BytesIO
@@ -11,39 +11,45 @@ import pandas as pd
 import streamlit as st
 
 # =============================
-# App config & UI helpers
+# App config & links
 # =============================
 st.set_page_config(page_title="Pilot Report Builder — Web", layout="wide")
 
 APP_NAME = "TFS Pilot Report Builder"
 APP_VERSION = "2025.09.01"
 
+# 🔗 Paste your Salesforce report URLs here:
+SALESFORCE_REPORTS = {
+    "block": "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZfNEAU/view?queryScope=userFolders",  # Block Time / Instrument Currency
+    "duty":  "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZnREAU/view?queryScope=userFolders",   # Duty Days
+    "pto":   "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yaoLEAQ/view?queryScope=userFolders",    # PTO & Off
+}
+
 def inject_css():
     st.markdown(
         """
         <style>
-        .block-container {
-            padding-top: calc(3.25rem + env(safe-area-inset-top));
-            padding-bottom: 1.25rem;
-            max-width: 1200px;
-        }
+        .block-container { padding-top: calc(3.25rem + env(safe-area-inset-top));
+                           padding-bottom: 1.25rem; max-width: 1200px; }
         h1, h2, h3 { letter-spacing: 0.2px; }
 
-        /* Buttons look square-ish with rounded corners; keep size consistent */
-        .stButton > button {
-            background: #E4002B; color: white; border: 0;
-            border-radius: 14px; padding: .8rem 1.15rem; font-weight: 700;
-        }
-        .stButton > button:hover { filter: brightness(0.95); }
-        .stDownloadButton > button {
-            border-radius: 14px; padding: .8rem 1.15rem; font-weight: 700;
-        }
+        /* Primary buttons */
+        .stButton > button { background:#E4002B; color:#fff; border:0;
+                             border-radius:14px; padding:.8rem 1.15rem; font-weight:700; }
+        .stButton > button:hover { filter:brightness(0.95); }
+        .stDownloadButton > button { border-radius:14px; padding:.8rem 1.15rem; font-weight:700; }
 
         /* Ready/Waiting pills */
         .pill { display:inline-block; padding:.15rem .6rem; border-radius:999px;
-                font-size:.85rem; font-weight:600; margin-left:.4rem; }
+                font-size:.85rem; font-weight:600; margin-left:.4rem; vertical-align:middle; }
         .ok   { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
         .wait { background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }
+
+        /* Small link-style button for Salesforce open links */
+        .sfbtn { display:inline-block; text-decoration:none; background:#111827; color:#fff;
+                 padding:.45rem .7rem; border-radius:10px; font-weight:600; }
+        .sfbtn:hover { filter:brightness(0.95); }
+        .sfbtn.disabled { background:#9ca3af; pointer-events:none; }
 
         #MainMenu {visibility:hidden;} footer {visibility:hidden;}
         </style>
@@ -54,51 +60,40 @@ def inject_css():
 def pill(ok: bool) -> str:
     return f"<span class='pill {'ok' if ok else 'wait'}'>{'Ready' if ok else 'Waiting'}</span>"
 
+def link_button(label: str, url: Optional[str]):
+    if url and url.startswith("http"):
+        st.markdown(f"<div style='text-align:right'><a class='sfbtn' href='{url}' target='_blank'>{label}</a></div>",
+                    unsafe_allow_html=True)
+    else:
+        st.markdown("<div style='text-align:right'><a class='sfbtn disabled'>Link missing</a></div>",
+                    unsafe_allow_html=True)
+
 inject_css()
 
-# Session state to keep layout stable and avoid jumping
+# Keep layout stable
 if "report_bytes" not in st.session_state:
     st.session_state.report_bytes = None
 if "report_name" not in st.session_state:
     st.session_state.report_name = ""
 if "quick_totals" not in st.session_state:
-    st.session_state.quick_totals = None  # dict with keys we show in metrics
+    st.session_state.quick_totals = None  # dict
 
 # =============================
-# Header
+# Header + quick totals
 # =============================
 st.markdown(f"### 🛫 {APP_NAME}")
 st.caption("Upload the 3 .Biz Reports (Block Time, Duty Days, PTO & Off). Filthy Animals. …Go With Trim")
-
-# Quick totals live directly under the header, reserved space even before build
 st.markdown("---")
 qt_cols = st.columns(4)
-qt_vals = st.session_state.quick_totals or {
-    "block30": None, "duty_ytd": None, "rons90": None, "off30": None,
-}
+qt_vals = st.session_state.quick_totals or {"block30": None, "duty_ytd": None, "rons90": None, "off30": None}
 qt_cols[0].metric("Block (30 days)", f"{qt_vals['block30']:.1f} hrs" if qt_vals["block30"] is not None else "—")
 qt_cols[1].metric("Duty Days (YTD)", int(qt_vals["duty_ytd"]) if qt_vals["duty_ytd"] is not None else "—")
 qt_cols[2].metric("RONs (90 days)", int(qt_vals["rons90"]) if qt_vals["rons90"] is not None else "—")
 qt_cols[3].metric("Days Off (30 days)", int(qt_vals["off30"]) if qt_vals["off30"] is not None else "—")
-
-# Small help expander to save space
-with st.expander("How it works (tap to open)", expanded=False):
-    st.markdown(
-        """
-        1) Upload **all three** .xlsx exports from Salesforce  
-        2) Click **Build** — we parse, merge, and format  
-        3) Use the **Download** button to get the Excel file
-
-        - Roster/order is locked to the TFS list  
-        - Hours rounded to 0.1; counts rounded to whole numbers  
-        - If .Biz changes headers, we’ll re-pin the parser
-        """
-    )
-
 st.markdown("---")
 
 # =============================
-# Hard-locked pilot roster & order
+# Whitelist
 # =============================
 PILOT_WHITELIST: List[str] = [
     "Barry Wolfe","Bradley Jordan","Debra Voit","Dustin Anderson","Eric Tange",
@@ -162,9 +157,6 @@ def _norm(s: str) -> str:
     s = re.sub(r"[^0-9a-zA-Z]+","",s)
     return s.lower()
 
-# =============================
-# Header helpers pinned to 2025-08-31 exports
-# =============================
 def _find_row(df: pd.DataFrame, tokens: List[str], max_rows: int = 120) -> Optional[int]:
     toks = [t.lower() for t in tokens]
     for i in range(min(max_rows, len(df))):
@@ -274,7 +266,6 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     for c in other_num_cols:
         rep_out[c] = pd.to_numeric(rep_out[c], errors="coerce").round(0)
 
-    # AVERAGE row (ceil) for non-Block cols
     avg_mask = rep_out["Pilot"].astype(str).str.upper() == "AVERAGE"
     for c in other_num_cols:
         rep_out.loc[avg_mask, c] = np.ceil(pd.to_numeric(rep_out.loc[avg_mask, c], errors="coerce")).astype(int)
@@ -295,16 +286,13 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
 
         group_red   = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":TARGET_RED,"font_color":WHITE,"border":1})
         group_white = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":WHITE,"font_color":TARGET_RED,"border":1})
-
         sub_red     = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":TARGET_RED,"font_color":WHITE,"border":1})
         sub_white   = wb.add_format({"bold": True,"align":"center","valign":"vcenter","bg_color":WHITE,"font_color":TARGET_RED,"border":1})
-
         pilot_sub   = wb.add_format({"bold": True,"align":"left","valign":"vcenter","bg_color":"#F2F2F2","border":1})
 
         text_left   = wb.add_format({"num_format":"@",  "align":"left",   "valign":"vcenter"})
         int_center  = wb.add_format({"num_format":"0",  "align":"center", "valign":"vcenter"})
         hour_center = wb.add_format({"num_format":"0.0","align":"center", "valign":"vcenter"})
-
         text_total  = wb.add_format({"num_format":"@",  "align":"left",   "valign":"vcenter","bg_color":"#FFF2CC","bold":True})
         int_total   = wb.add_format({"num_format":"0",  "align":"center", "valign":"vcenter","bg_color":"#FFF2CC","bold":True})
         hour_total  = wb.add_format({"num_format":"0.0","align":"center", "valign":"vcenter","bg_color":"#FFF2CC","bold":True})
@@ -420,7 +408,7 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     return bio, fname
 
 # =============================
-# Upload row: 3 horizontal uploaders + buttons under left/right
+# Upload row (3 horizontal uploaders)
 # =============================
 col1, col2, col3 = st.columns(3)
 
@@ -429,26 +417,37 @@ with col1:
         "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
         help="Salesforce report: Block Time / Instrument Currency"
     )
-    st.markdown(f"Block Time {pill(block_file is not None)}", unsafe_allow_html=True)
+    # Status + Salesforce link row
+    s1, s2 = st.columns([1.2, 0.8])
+    with s1:
+        st.markdown(f"**Block Time** {pill(block_file is not None)}", unsafe_allow_html=True)
+    with s2:
+        link_button("Open in Salesforce ↗", SALESFORCE_REPORTS.get("block"))
     st.write("")
-    build = st.button("Build Pilot Report ✅", use_container_width=True)  # stays here always
+    build = st.button("Build Pilot Report ✅", use_container_width=True)
 
 with col2:
     duty_file = st.file_uploader(
         "2) Duty Days export (.xlsx)", type=["xlsx"], key="duty",
         help="Salesforce report: Duty Days"
     )
-    st.markdown(f"Duty Days {pill(duty_file is not None)}", unsafe_allow_html=True)
+    s1, s2 = st.columns([1.2, 0.8])
+    with s1:
+        st.markdown(f"**Duty Days** {pill(duty_file is not None)}", unsafe_allow_html=True)
+    with s2:
+        link_button("Open in Salesforce ↗", SALESFORCE_REPORTS.get("duty"))
 
 with col3:
     pto_file = st.file_uploader(
         "3) PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
         help="Salesforce report: PTO and Off"
     )
-    st.markdown(f"PTO & Off {pill(pto_file is not None)}", unsafe_allow_html=True)
+    s1, s2 = st.columns([1.2, 0.8])
+    with s1:
+        st.markdown(f"**PTO & Off** {pill(pto_file is not None)}", unsafe_allow_html=True)
+    with s2:
+        link_button("Open in Salesforce ↗", SALESFORCE_REPORTS.get("pto"))
     st.write("")
-
-    # Download button lives here; disabled until a report is built
     if st.session_state.report_bytes:
         st.download_button(
             "⬇️ Download Pilot Report (Excel)",
@@ -467,7 +466,7 @@ with col3:
         )
 
 # =============================
-# Processing (with diagnostics)
+# Processing
 # =============================
 if build:
     if not (block_file and duty_file and pto_file):
@@ -489,7 +488,6 @@ if build:
             st.exception(e); st.stop()
 
     with st.spinner("Merging & formatting…"):
-        # Merge by first token of name
         blk = blk.rename(columns={"Pilot": "Pilot_blk"})
         blk_key = blk.assign(PilotKey=blk["Pilot_blk"].str.split().str[0].str.lower())
         dut_key = dut.assign(PilotKey=dut["PilotFirst"].str.split().str[0].str.lower())
@@ -498,7 +496,6 @@ if build:
         rep = blk_key.merge(dut_key, on="PilotKey", how="outer", suffixes=("", "_dut"))
         rep = rep.merge(pto_key, on="PilotKey", how="outer", suffixes=("", "_pto"))
 
-        # Display name preference: Block → PTO → Duty → key
         def _pick(row):
             if pd.notna(row.get("Pilot_blk")) and str(row["Pilot_blk"]).strip(): return row["Pilot_blk"]
             if pd.notna(row.get("PilotFirst_pto")) and str(row["PilotFirst_pto"]).strip(): return row["PilotFirst_pto"]
@@ -506,7 +503,6 @@ if build:
             return str(row.get("PilotKey", "")).title()
         rep["Pilot"] = rep.apply(_pick, axis=1)
 
-        # Cleanup and order lock
         rep = rep.drop(columns=["Pilot_blk","PilotFirst","PilotFirst_pto","PilotKey"], errors="ignore")
         rep = rep.loc[:, ~rep.columns.duplicated()]
 
@@ -516,7 +512,6 @@ if build:
         rep["Pilot"] = pd.Categorical(rep["Pilot"], categories=order, ordered=True)
         rep = rep.sort_values("Pilot").reset_index(drop=True)
 
-        # Label 90-day takeoffs/landings for grouping
         rep = rep.rename(columns={
             "Day Takeoff": "Day Takeoff 90 Day",
             "Night Takeoff": "Night Takeoff 90 Day",
@@ -524,7 +519,6 @@ if build:
             "Night Landing": "Night Landing 90 Day",
         })
 
-        # Exact output column order
         desired_order = [
             "Pilot",
             "Duty Days 30 Day","Duty Days 90 Day","Duty Days YTD",
@@ -537,18 +531,14 @@ if build:
             "Day Landing 90 Day","Night Landing 90 Day",
             "Holds 6 Month",
         ]
-        cols_order = [c for c in desired_order if c in rep.columns] + [
-            c for c in rep.columns if c not in desired_order and c != "Pilot"
-        ]
+        cols_order = [c for c in desired_order if c in rep.columns] + [c for c in rep.columns if c not in desired_order and c != "Pilot"]
         rep = rep[cols_order]
 
-        # Fill numerics and dedupe cols
         for c in rep.columns:
             if c != "Pilot" and pd.api.types.is_numeric_dtype(rep[c]):
                 rep[c] = rep[c].fillna(0)
         rep = collapse_duplicate_columns(rep)
 
-        # Totals/Averages rows
         numeric_cols = [c for c in rep.columns if c != "Pilot" and pd.api.types.is_numeric_dtype(rep[c])]
         if not numeric_cols:
             st.error("No numeric columns were detected after merging. Check that exports match your current Salesforce formats.")
@@ -558,7 +548,7 @@ if build:
         avg_row   = {c: rep[c].mean() for c in numeric_cols};   avg_row["Pilot"] = "AVERAGE"
         rep_out = pd.concat([rep, pd.DataFrame([total_row, avg_row])], ignore_index=True)
 
-        # Update quick totals (from TOTAL row)
+        # Update quick totals
         tot = rep_out[rep_out["Pilot"].astype(str).str.upper() == "TOTAL"]
         if not tot.empty:
             t = tot.iloc[0]
@@ -569,7 +559,7 @@ if build:
                 "off30": int(t.get("OFF 30 Day", 0)) if "OFF 30 Day" in rep_out.columns else None,
             }
 
-        # Export to Excel and stash in session state for stable download button
+        # Export to Excel + stash in session state
         try:
             bio, fname = round_and_export(rep_out)
         except Exception as e:
