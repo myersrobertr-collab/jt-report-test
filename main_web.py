@@ -20,9 +20,9 @@ APP_VERSION = "2025.09.01"
 
 # 🔗 Paste your Salesforce report URLs here:
 SALESFORCE_REPORTS = {
-    "block": "https://your.salesforce.com/REPORT_ID_BLOCK",  # Block Time / Instrument Currency
-    "duty":  "https://your.salesforce.com/REPORT_ID_DUTY",   # Duty Days
-    "pto":   "https://your.salesforce.com/REPORT_ID_PTO",    # PTO & Off
+    "block": "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZfNEAU/view?queryScope=userFolders",  # Block Time / Instrument Currency
+    "duty":  "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yZnREAU/view?queryScope=userFolders",   # Duty Days
+    "pto":   "https://target-flight.lightning.force.com/lightning/r/Report/00Oao000006yaoLEAQ/view?queryScope=userFolders",    # PTO & Off
 }
 
 def inject_css():
