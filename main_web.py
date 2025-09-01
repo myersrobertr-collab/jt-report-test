@@ -1,4 +1,4 @@
-# main_web.py  — TFS Pilot Report Builder (release 2025-09-01, stacked UI FIX)
+# main_web.py — TFS Pilot Report Builder (2025-09-01 • compact horizontal UI)
 import re
 import unicodedata
 from io import BytesIO
@@ -22,40 +22,29 @@ def inject_css():
     st.markdown(
         """
         <style>
-        /* keep title clear of toolbar, support phone notches */
         .block-container {
             padding-top: calc(3.25rem + env(safe-area-inset-top));
-            padding-bottom: 2rem;
+            padding-bottom: 1.25rem;
             max-width: 1200px;
         }
         h1, h2, h3 { letter-spacing: 0.2px; }
-        .small-muted { color: #6b7280; font-size: 0.9rem; }
 
-        /* primary buttons: square-ish with rounded corners */
+        /* Buttons look square-ish with rounded corners; keep size consistent */
         .stButton > button {
             background: #E4002B; color: white; border: 0;
-            border-radius: 14px;
-            padding: .8rem 1.15rem;
-            font-weight: 700;
+            border-radius: 14px; padding: .8rem 1.15rem; font-weight: 700;
         }
         .stButton > button:hover { filter: brightness(0.95); }
-
-        /* download button to match */
         .stDownloadButton > button {
-            border-radius: 14px;
-            padding: .8rem 1.15rem;
-            font-weight: 700;
+            border-radius: 14px; padding: .8rem 1.15rem; font-weight: 700;
         }
 
-        /* status pills */
-        .pill {
-            display:inline-block; padding:.15rem .6rem; border-radius:999px;
-            font-size:.85rem; font-weight:600; margin-left:.4rem;
-        }
+        /* Ready/Waiting pills */
+        .pill { display:inline-block; padding:.15rem .6rem; border-radius:999px;
+                font-size:.85rem; font-weight:600; margin-left:.4rem; }
         .ok   { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
         .wait { background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }
 
-        /* hide default streamlit footer/menu */
         #MainMenu {visibility:hidden;} footer {visibility:hidden;}
         </style>
         """,
@@ -67,12 +56,45 @@ def pill(ok: bool) -> str:
 
 inject_css()
 
+# Session state to keep layout stable and avoid jumping
+if "report_bytes" not in st.session_state:
+    st.session_state.report_bytes = None
+if "report_name" not in st.session_state:
+    st.session_state.report_name = ""
+if "quick_totals" not in st.session_state:
+    st.session_state.quick_totals = None  # dict with keys we show in metrics
+
 # =============================
 # Header
 # =============================
 st.markdown(f"### 🛫 {APP_NAME}")
 st.caption("Upload the 3 .Biz Reports (Block Time, Duty Days, PTO & Off). Filthy Animals. …Go With Trim")
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+# Quick totals live directly under the header, reserved space even before build
+st.markdown("---")
+qt_cols = st.columns(4)
+qt_vals = st.session_state.quick_totals or {
+    "block30": None, "duty_ytd": None, "rons90": None, "off30": None,
+}
+qt_cols[0].metric("Block (30 days)", f"{qt_vals['block30']:.1f} hrs" if qt_vals["block30"] is not None else "—")
+qt_cols[1].metric("Duty Days (YTD)", int(qt_vals["duty_ytd"]) if qt_vals["duty_ytd"] is not None else "—")
+qt_cols[2].metric("RONs (90 days)", int(qt_vals["rons90"]) if qt_vals["rons90"] is not None else "—")
+qt_cols[3].metric("Days Off (30 days)", int(qt_vals["off30"]) if qt_vals["off30"] is not None else "—")
+
+# Small help expander to save space
+with st.expander("How it works (tap to open)", expanded=False):
+    st.markdown(
+        """
+        1) Upload **all three** .xlsx exports from Salesforce  
+        2) Click **Build** — we parse, merge, and format  
+        3) Use the **Download** button to get the Excel file
+
+        - Roster/order is locked to the TFS list  
+        - Hours rounded to 0.1; counts rounded to whole numbers  
+        - If .Biz changes headers, we’ll re-pin the parser
+        """
+    )
+
 st.markdown("---")
 
 # =============================
@@ -141,7 +163,7 @@ def _norm(s: str) -> str:
     return s.lower()
 
 # =============================
-# Header helpers pinned to your 2025-08-31 export structure
+# Header helpers pinned to 2025-08-31 exports
 # =============================
 def _find_row(df: pd.DataFrame, tokens: List[str], max_rows: int = 120) -> Optional[int]:
     toks = [t.lower() for t in tokens]
@@ -152,10 +174,9 @@ def _find_row(df: pd.DataFrame, tokens: List[str], max_rows: int = 120) -> Optio
     return None
 
 # =============================
-# Parsers (stable mapping matching your latest exports)
+# Parsers
 # =============================
 def parse_block_time(xl) -> pd.DataFrame:
-    """Maps Block 30/6mo/YTD, Day/Night TO & LDG, Holds 6mo."""
     raw = pd.read_excel(xl, header=None)
     idx_periods = _find_row(raw, ["block", "30"]) or _find_row(raw, ["30", "ytd"]) or 34
     idx_metrics = idx_periods + 1
@@ -197,7 +218,6 @@ def parse_block_time(xl) -> pd.DataFrame:
     return drop_empty_metric_rows(out, "Pilot", [c for c in out.columns if c != "Pilot"])
 
 def parse_duty_days(xl) -> pd.DataFrame:
-    """Duty Days export pinned to triplets per period."""
     raw = pd.read_excel(xl, header=None)
     idx_periods = _find_row(raw, ["30", "90", "ytd"]) or 27
     idx_metrics = idx_periods + 1
@@ -222,7 +242,6 @@ def parse_duty_days(xl) -> pd.DataFrame:
     return drop_empty_metric_rows(duty_df, "PilotFirst", duty_df.columns[1:].tolist())
 
 def parse_pto_off(xl) -> pd.DataFrame:
-    """PTO & Off export pinned to pairs per period."""
     raw = pd.read_excel(xl, header=None)
     idx_periods = _find_row(raw, ["pto", "off"]) or 24
     idx_metrics = idx_periods + 1
@@ -401,54 +420,51 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     return bio, fname
 
 # =============================
-# Uploads UI  (stacked + centered, no illegal nesting)
+# Upload row: 3 horizontal uploaders + buttons under left/right
 # =============================
-left, right = st.columns([1.2, 1])  # help panel stays on the right
+col1, col2, col3 = st.columns(3)
 
-with left:
-    st.subheader("Upload reports")
-
-    # One-level nesting only: three columns create a centered middle column
-    padL, center, padR = st.columns([1, 1.3, 1])
-    with center:
-        block_file = st.file_uploader(
-            "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
-            help="Salesforce report: Block Time / Instrument Currency"
-        )
-        st.markdown(f"Block Time {pill(block_file is not None)}", unsafe_allow_html=True)
-        st.write("")
-
-        duty_file = st.file_uploader(
-            "2) Duty Days export (.xlsx)", type=["xlsx"], key="duty",
-            help="Salesforce report: Duty Days"
-        )
-        st.markdown(f"Duty Days {pill(duty_file is not None)}", unsafe_allow_html=True)
-        st.write("")
-
-        pto_file = st.file_uploader(
-            "3) PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
-            help="Salesforce report: PTO and Off"
-        )
-        st.markdown(f"PTO & Off {pill(pto_file is not None)}", unsafe_allow_html=True)
-        st.write("")
-
-        # No extra columns here (would be 2nd-level nesting) — keep the button in this centered column
-        build = st.button("Build Pilot Report ✅", use_container_width=True)
-
-with right:
-    st.subheader("How it works")
-    st.markdown(
-        """
-        1. Upload **all three** .xlsx exports from Salesforce.  
-        2. Click **Build** — we parse, merge, and format.  
-        3. Download the ready-to-send Excel.
-        
-        **Notes**
-        - Roster/order is set to current TFS Pilots  
-        - Hours rounded to 0.1; counts are whole numbers.  
-        - If .Biz tweaks headers, ping me and I’ll re-pin.
-        """
+with col1:
+    block_file = st.file_uploader(
+        "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
+        help="Salesforce report: Block Time / Instrument Currency"
     )
+    st.markdown(f"Block Time {pill(block_file is not None)}", unsafe_allow_html=True)
+    st.write("")
+    build = st.button("Build Pilot Report ✅", use_container_width=True)  # stays here always
+
+with col2:
+    duty_file = st.file_uploader(
+        "2) Duty Days export (.xlsx)", type=["xlsx"], key="duty",
+        help="Salesforce report: Duty Days"
+    )
+    st.markdown(f"Duty Days {pill(duty_file is not None)}", unsafe_allow_html=True)
+
+with col3:
+    pto_file = st.file_uploader(
+        "3) PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
+        help="Salesforce report: PTO and Off"
+    )
+    st.markdown(f"PTO & Off {pill(pto_file is not None)}", unsafe_allow_html=True)
+    st.write("")
+
+    # Download button lives here; disabled until a report is built
+    if st.session_state.report_bytes:
+        st.download_button(
+            "⬇️ Download Pilot Report (Excel)",
+            st.session_state.report_bytes,
+            st.session_state.report_name or "Pilot_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    else:
+        st.download_button(
+            "⬇️ Download Pilot Report (Excel)",
+            b"", "Pilot_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            disabled=True,
+        )
 
 # =============================
 # Processing (with diagnostics)
@@ -542,41 +558,26 @@ if build:
         avg_row   = {c: rep[c].mean() for c in numeric_cols};   avg_row["Pilot"] = "AVERAGE"
         rep_out = pd.concat([rep, pd.DataFrame([total_row, avg_row])], ignore_index=True)
 
-        # Quick metrics ribbon (from TOTAL row)
+        # Update quick totals (from TOTAL row)
         tot = rep_out[rep_out["Pilot"].astype(str).str.upper() == "TOTAL"]
         if not tot.empty:
             t = tot.iloc[0]
-            st.markdown("---")
-            st.subheader("Quick totals")
-            m1, m2, m3, m4 = st.columns(4)
-            if "Block Hours 30 Day" in rep_out.columns:
-                m1.metric("Block (30 days)", f"{float(t.get('Block Hours 30 Day', 0)):.1f} hrs")
-            if "Duty Days YTD" in rep_out.columns:
-                m2.metric("Duty Days (YTD)", int(t.get("Duty Days YTD", 0)))
-            if "RONs 90 Day" in rep_out.columns:
-                m3.metric("RONs (90 days)", int(t.get("RONs 90 Day", 0)))
-            if "OFF 30 Day" in rep_out.columns:
-                m4.metric("Days Off (30 days)", int(t.get("OFF 30 Day", 0)))
+            st.session_state.quick_totals = {
+                "block30": float(t.get("Block Hours 30 Day", 0)) if "Block Hours 30 Day" in rep_out.columns else None,
+                "duty_ytd": int(t.get("Duty Days YTD", 0)) if "Duty Days YTD" in rep_out.columns else None,
+                "rons90": int(t.get("RONs 90 Day", 0)) if "RONs 90 Day" in rep_out.columns else None,
+                "off30": int(t.get("OFF 30 Day", 0)) if "OFF 30 Day" in rep_out.columns else None,
+            }
 
-        # Export to Excel
+        # Export to Excel and stash in session state for stable download button
         try:
             bio, fname = round_and_export(rep_out)
         except Exception as e:
             st.exception(e); st.stop()
 
-    st.success("✅ Report built. Use the download button below.")
+        st.session_state.report_bytes = bio.getvalue()
+        st.session_state.report_name = fname
 
-    # Centered download button (top-level, so it's safe to use columns here)
-    d1, d2, d3 = st.columns([1, 2, 1])
-    with d2:
-        st.download_button(
-            "⬇️ Download Pilot Report (Excel)",
-            bio,
-            fname,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-    st.toast("Report ready — download below.", icon="✅")
+    st.success("✅ Report built. Use the Download button on the right.")
 else:
     st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
