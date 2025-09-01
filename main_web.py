@@ -21,44 +21,40 @@ BRAND_RED = "#E4002B"
 
 def inject_css():
     st.markdown(
-        f"""
+        """
         <style>
-        /* layout & spacing */
-        .block-container {{padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1200px;}}
-        h1, h2, h3 {{ letter-spacing: 0.2px; }}
-        .small-muted {{ color: #6b7280; font-size: 0.9rem; }}
+        /* add more top padding so the title isn't under the cloud toolbar / browser chrome */
+        .block-container {
+            padding-top: calc(3rem + env(safe-area-inset-top));
+            padding-bottom: 2rem;
+            max-width: 1200px;
+        }
+        h1, h2, h3 { letter-spacing: 0.2px; }
+        .small-muted { color: #6b7280; font-size: 0.9rem; }
 
-        /* primary buttons */
-        .stButton > button {{
-            background: {BRAND_RED};
-            color: white;
-            border: 0;
-            border-radius: 12px;
-            padding: .7rem 1rem;
-            font-weight: 700;
-        }}
-        .stButton > button:hover {{ filter: brightness(0.95); }}
+        .stButton > button {
+            background: #E4002B; color: white; border: 0; border-radius: 12px;
+            padding: .7rem 1rem; font-weight: 700;
+        }
+        .stButton > button:hover { filter: brightness(0.95); }
 
-        /* download button */
-        .stDownloadButton > button {{
-            border-radius: 12px;
-            padding: .7rem 1rem;
-            font-weight: 700;
-        }}
+        .stDownloadButton > button {
+            border-radius: 12px; padding: .7rem 1rem; font-weight: 700;
+        }
 
-        /* status pills */
-        .pill {{
+        .pill {
             display:inline-block; padding:.15rem .6rem; border-radius:999px;
             font-size:.85rem; font-weight:600; margin-left:.4rem;
-        }}
-        .ok {{ background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }}
-        .wait {{ background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }}
+        }
+        .ok { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
+        .wait { background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }
 
-        /* hide default streamlit footer/menu */
-        #MainMenu {{visibility:hidden;}} footer {{visibility:hidden;}}
+        #MainMenu {visibility:hidden;} footer {visibility:hidden;}
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
     )
 
 def pill(ok: bool) -> str:
@@ -71,7 +67,7 @@ inject_css()
 # =============================
 st.markdown(f"### 🛫 {APP_NAME}")
 st.caption("Upload the 3 .Biz Reports (Block Time, Duty Days, PTO & Off). Filthy Animals. …Go With Trim")
-st.markdown(f"<div class='small-muted'>Version {APP_VERSION}</div>", unsafe_allow_html=True)
+st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 st.markdown("---")
 
 # =============================
