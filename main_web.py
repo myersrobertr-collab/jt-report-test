@@ -602,7 +602,6 @@ if build:
 
     st.success("✅ Report built. Download is ready on the right.")
 else:
-    # st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
     st.markdown(
     """
     <style>
