@@ -1,4 +1,4 @@
-# main_web.py  — TFS Pilot Report Builder (release 2025-09-01, polished UI)
+# main_web.py  — TFS Pilot Report Builder (release 2025-09-01, stacked UI)
 import re
 import unicodedata
 from io import BytesIO
@@ -17,38 +17,45 @@ st.set_page_config(page_title="Pilot Report Builder — Web", layout="wide")
 
 APP_NAME = "TFS Pilot Report Builder"
 APP_VERSION = "2025.09.01"
-BRAND_RED = "#E4002B"
 
 def inject_css():
     st.markdown(
         """
         <style>
-        /* add more top padding so the title isn't under the cloud toolbar / browser chrome */
+        /* keep title clear of toolbar, support phone notches */
         .block-container {
-            padding-top: calc(3rem + env(safe-area-inset-top));
+            padding-top: calc(3.25rem + env(safe-area-inset-top));
             padding-bottom: 2rem;
             max-width: 1200px;
         }
         h1, h2, h3 { letter-spacing: 0.2px; }
         .small-muted { color: #6b7280; font-size: 0.9rem; }
 
+        /* primary buttons: square-ish with rounded corners */
         .stButton > button {
-            background: #E4002B; color: white; border: 0; border-radius: 12px;
-            padding: .7rem 1rem; font-weight: 700;
+            background: #E4002B; color: white; border: 0;
+            border-radius: 14px;           /* more square but rounded */
+            padding: .8rem 1.15rem;        /* consistent height */
+            font-weight: 700;
         }
         .stButton > button:hover { filter: brightness(0.95); }
 
+        /* download button to match */
         .stDownloadButton > button {
-            border-radius: 12px; padding: .7rem 1rem; font-weight: 700;
+            border-radius: 14px;
+            padding: .8rem 1.15rem;
+            font-weight: 700;
         }
 
+        /* status pills */
         .pill {
             display:inline-block; padding:.15rem .6rem; border-radius:999px;
             font-size:.85rem; font-weight:600; margin-left:.4rem;
         }
-        .ok { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
+        .ok   { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
         .wait { background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }
 
+        /* hide default streamlit footer/menu */
         #MainMenu {visibility:hidden;} footer {visibility:hidden;}
         </style>
         """,
@@ -394,28 +401,41 @@ def round_and_export(rep_out: pd.DataFrame) -> Tuple[BytesIO, str]:
     return bio, fname
 
 # =============================
-# Uploads UI
+# Uploads UI  (stacked + centered)
 # =============================
-left, right = st.columns([1.2, 1])
+left, right = st.columns([1.2, 1])  # keep help panel on the right
 
 with left:
     st.subheader("Upload reports")
-    col1, col2 = st.columns(2)
-    with col1:
-        block_file = st.file_uploader("Block Time export (.xlsx)", type=["xlsx"], key="blk",
-                                      help="Salesforce report: Block Time / Instrument Currency")
+
+    # Center column that holds a vertical stack of uploaders
+    padL, center, padR = st.columns([1, 1.3, 1])
+    with center:
+        block_file = st.file_uploader(
+            "1) Block Time export (.xlsx)", type=["xlsx"], key="blk",
+            help="Salesforce report: Block Time / Instrument Currency"
+        )
         st.markdown(f"Block Time {pill(block_file is not None)}", unsafe_allow_html=True)
-    with col2:
-        duty_file  = st.file_uploader("Duty Days export (.xlsx)", type=["xlsx"], key="duty",
-                                      help="Salesforce report: Duty Days")
+        st.write("")
+
+        duty_file = st.file_uploader(
+            "2) Duty Days export (.xlsx)", type=["xlsx"], key="duty",
+            help="Salesforce report: Duty Days"
+        )
         st.markdown(f"Duty Days {pill(duty_file is not None)}", unsafe_allow_html=True)
+        st.write("")
 
-    pto_file   = st.file_uploader("PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
-                                  help="Salesforce report: PTO and Off")
-    st.markdown(f"PTO & Off {pill(pto_file is not None)}", unsafe_allow_html=True)
+        pto_file = st.file_uploader(
+            "3) PTO & Off export (.xlsx)", type=["xlsx"], key="pto",
+            help="Salesforce report: PTO and Off"
+        )
+        st.markdown(f"PTO & Off {pill(pto_file is not None)}", unsafe_allow_html=True)
+        st.write("")
 
-    st.write("")  # spacing
-    build = st.button("Build Pilot Report ✅", use_container_width=True)
+        # Centered Build button under the stack
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            build = st.button("Build Pilot Report ✅", use_container_width=True)
 
 with right:
     st.subheader("How it works")
@@ -426,7 +446,7 @@ with right:
         3. Download the ready-to-send Excel.
         
         **Notes**
-        - Roster/order is set to current TFS Pilots 
+        - Roster/order is set to current TFS Pilots  
         - Hours rounded to 0.1; counts are whole numbers.  
         - If .Biz tweaks headers, ping me and I’ll re-pin.
         """
@@ -458,7 +478,7 @@ if build:
         # Merge by first token of name
         blk = blk.rename(columns={"Pilot": "Pilot_blk"})
         blk_key = blk.assign(PilotKey=blk["Pilot_blk"].str.split().str[0].str.lower())
-        dut_key = dut.assign(PilotKey=dut["PilotFirst"].str.lower())
+        dut_key = dut.assign(PilotKey=dut["PilotFirst"].str.split().str[0].str.lower())
         pto_key = pto.assign(PilotKey=pto["PilotFirst"].str.split().str[0].str.lower())
 
         rep = blk_key.merge(dut_key, on="PilotKey", how="outer", suffixes=("", "_dut"))
@@ -547,13 +567,18 @@ if build:
             st.exception(e); st.stop()
 
     st.success("✅ Report built. Use the download button below.")
-    st.download_button(
-        "⬇️ Download Pilot Report (Excel)",
-        bio,
-        fname,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+
+    # Centered download button to match Build button
+    d1, d2, d3 = st.columns([1, 2, 1])
+    with d2:
+        st.download_button(
+            "⬇️ Download Pilot Report (Excel)",
+            bio,
+            fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
     st.toast("Report ready — download below.", icon="✅")
 else:
     st.info("Upload your three .Biz Reports and click **Build Pilot Report**.")
