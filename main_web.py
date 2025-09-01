@@ -426,9 +426,9 @@ with right:
         3. Download the ready-to-send Excel.
         
         **Notes**
-        - Roster/order is hard-locked to your TFS list.  
-        - We round hours to 0.1; counts are whole numbers.  
-        - If Salesforce tweaks headers, ping me and I’ll re-pin.
+        - Roster/order is set to current TFS Pilots 
+        - Hours rounded to 0.1; counts are whole numbers.  
+        - If .Biz tweaks headers, ping me and I’ll re-pin.
         """
     )
 
